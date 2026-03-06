@@ -1,4 +1,4 @@
-# PostgreSQL 16 HA Cluster (Rocky Linux 9)
+# PostgreSQL 16 HA Cluster (Ubuntu 24.04 LTS)
 ## 3 PostgreSQL Nodes + Patroni + etcd + 1 HAProxy
 
 ---
@@ -24,28 +24,20 @@ Replace placeholders:
 
 # 1. OS Preparation (All PostgreSQL Nodes)
 
-## Disable SELinux
-
-Edit:
+## Update System
 
 ```
-/etc/selinux/config
+sudo apt update && sudo apt upgrade -y
 ```
-
-Set:
-
-```
-SELINUX=disabled
-```
-
-Reboot system.
 
 ---
 
 ## Disable Firewall (Lab Only)
 
+Ubuntu uses UFW:
+
 ```
-sudo systemctl disable firewalld --now
+sudo systemctl disable ufw --now
 ```
 
 Production: open ports:
@@ -70,29 +62,61 @@ Production: open ports:
 
 # 2. Install PostgreSQL 16 (Official PGDG)
 
-```
-sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
-sudo dnf -qy module disable postgresql
-sudo dnf install -y postgresql16 postgresql16-server
-sudo dnf install -y epel-release
-sudo dnf install -y python3 python3-devel gcc git wget curl
-```
-
-Install Locale (ALL NODES)
+Install required tools:
 
 ```
-sudo dnf install -y glibc-langpack-en
-sudo localedef -i en_US -f UTF-8 en_US.UTF-8
-locale -a | grep en_US
+sudo apt install -y curl gnupg2 lsb-release build-essential git wget
 ```
 
-Disable default service:
+Add PostgreSQL repository:
 
 ```
-sudo systemctl disable postgresql-16 --now
+curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | \
+sudo gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] \
+http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | \
+sudo tee /etc/apt/sources.list.d/pgdg.list
+```
+
+Install PostgreSQL:
+
+```
+sudo apt update
+sudo apt install -y postgresql-16 postgresql-client-16
+```
+
+Install development tools for Patroni:
+
+```
+sudo apt install -y python3 python3-venv python3-pip python3-dev
+```
+
+Disable default PostgreSQL service (Patroni will manage it):
+
+```
+sudo systemctl stop postgresql
+sudo systemctl disable postgresql
 ```
 
 Do NOT run initdb manually.
+
+---
+
+## Install Locale (ALL NODES)
+
+Verify:
+
+```
+locale -a | grep en_US
+```
+
+If missing:
+
+```
+sudo locale-gen en_US.UTF-8
+sudo update-locale
+```
 
 ---
 
@@ -105,7 +129,7 @@ ETCD_RELEASE=$(curl -s https://api.github.com/repos/etcd-io/etcd/releases/latest
 wget https://github.com/etcd-io/etcd/releases/download/${ETCD_RELEASE}/etcd-${ETCD_RELEASE}-linux-amd64.tar.gz
 tar xvf etcd-${ETCD_RELEASE}-linux-amd64.tar.gz
 cd etcd-${ETCD_RELEASE}-linux-amd64
-sudo mv etcd* /usr/local/bin/
+sudo mv etcd etcdctl etcdutl /usr/local/bin/
 ```
 
 ---
@@ -113,8 +137,7 @@ sudo mv etcd* /usr/local/bin/
 ## Create etcd User and Directories
 
 ```
-sudo groupadd --system etcd
-sudo useradd -s /sbin/nologin --system -g etcd etcd
+sudo useradd -r -s /usr/sbin/nologin etcd
 sudo mkdir -p /var/lib/etcd
 sudo chown -R etcd:etcd /var/lib/etcd
 ```
@@ -175,20 +198,10 @@ etcdctl member list
 # 4. Install Patroni (All PostgreSQL Nodes)
 
 ```
-sudo dnf install -y python3 python3-devel gcc
 sudo python3 -m venv /opt/patroni
 sudo /opt/patroni/bin/pip install --upgrade pip
 sudo /opt/patroni/bin/pip install patroni[etcd] psycopg2-binary
 sudo chown -R postgres:postgres /opt/patroni
-```
-
----
-
-## Fix Locale Issue (Important)
-
-```
-sudo localedef -i en_US -f UTF-8 en_US.UTF-8
-locale -a | grep en_US
 ```
 
 ---
@@ -229,8 +242,8 @@ bootstrap:
 postgresql:
   listen: '<IP1>:5432'
   connect_address: '<IP1>:5432'
-  data_dir: /var/lib/pgsql/16/data
-  bin_dir: /usr/pgsql-16/bin
+  data_dir: /var/lib/postgresql/16/main
+  bin_dir: /usr/lib/postgresql/16/bin
 
   authentication:
     superuser:
@@ -284,9 +297,9 @@ On ALL nodes:
 ```
 sudo systemctl stop patroni
 sudo pkill -9 postgres
-sudo rm -rf /var/lib/pgsql/16/data
-sudo mkdir -p /var/lib/pgsql/16/data
-sudo chown -R postgres:postgres /var/lib/pgsql
+sudo rm -rf /var/lib/postgresql/16/main
+sudo mkdir -p /var/lib/postgresql/16/main
+sudo chown -R postgres:postgres /var/lib/postgresql
 ```
 
 Clear etcd (run once only):
@@ -301,17 +314,17 @@ etcdctl del --prefix /service/pg_cluster
 
 1. Ensure etcd running on ALL nodes.
 2. Start Patroni on postgre-1 ONLY.
-```
-sudo systemctl start patroni
-```
-3. Wait until Leader is running.
-4. Start Patroni on postgre-2.
-5. Start Patroni on postgre-3.
+
 ```
 sudo systemctl start patroni
 ```
 
+3. Wait until Leader is running.
+4. Start Patroni on postgre-2.
+5. Start Patroni on postgre-3.
+
 Verify:
+
 ```
 sudo -u postgres /opt/patroni/bin/patronictl -c /etc/patroni.yml list
 ```
@@ -326,7 +339,7 @@ Expected:
 # 9. Install HAProxy (haproxy-1)
 
 ```
-sudo dnf install -y haproxy
+sudo apt install -y haproxy
 ```
 
 Edit `/etc/haproxy/haproxy.cfg`:
@@ -404,4 +417,4 @@ HAProxy redirects traffic automatically.
 - HAProxy read/write split
 - Clean bootstrap process
 - Official PGDG packages
-- Locale issue fixed
+- Locale verified
