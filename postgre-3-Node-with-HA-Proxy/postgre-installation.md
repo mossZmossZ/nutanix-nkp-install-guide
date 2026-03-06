@@ -120,21 +120,25 @@ sudo update-locale
 
 ---
 
-# 3. Install etcd (All PostgreSQL Nodes)
+# 3. Install etcd (ALL PostgreSQL Nodes)
 
-## Download Latest Version
+## Download
 
 ```
+cd /tmp
 ETCD_RELEASE=$(curl -s https://api.github.com/repos/etcd-io/etcd/releases/latest | grep tag_name | cut -d '"' -f 4)
 wget https://github.com/etcd-io/etcd/releases/download/${ETCD_RELEASE}/etcd-${ETCD_RELEASE}-linux-amd64.tar.gz
 tar xvf etcd-${ETCD_RELEASE}-linux-amd64.tar.gz
 cd etcd-${ETCD_RELEASE}-linux-amd64
+
 sudo mv etcd etcdctl etcdutl /usr/local/bin/
+sudo chown root:root /usr/local/bin/etcd*
+sudo chmod 755 /usr/local/bin/etcd*
 ```
 
 ---
 
-## Create etcd User and Directories
+## Create etcd user
 
 ```
 sudo useradd -r -s /usr/sbin/nologin etcd
@@ -144,12 +148,13 @@ sudo chown -R etcd:etcd /var/lib/etcd
 
 ---
 
-## Create `/etc/etcd.conf` (Adjust Per Node)
+## Create `/etc/etcd.conf`
 
-Example for postgre-1:
+Example pg1 (FIRST BOOTSTRAP NODE):
 
 ```
 ETCD_NAME=postgre-1.example.com
+ETCD_DATA_DIR=/var/lib/etcd
 ETCD_LISTEN_PEER_URLS=http://<IP1>:2380
 ETCD_LISTEN_CLIENT_URLS=http://<IP1>:2379,http://127.0.0.1:2379
 ETCD_INITIAL_ADVERTISE_PEER_URLS=http://<IP1>:2380
@@ -159,9 +164,18 @@ ETCD_INITIAL_CLUSTER_STATE=new
 ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster
 ```
 
+Example pg2 / pg3 (JOINING NODES):
+
+```
+ETCD_INITIAL_CLUSTER_STATE=existing
+```
+
+⚠ Only pg1 uses `new`.
+All others use `existing`.
+
 ---
 
-## Create systemd Service
+## Create systemd service
 
 `/etc/systemd/system/etcd.service`
 
@@ -172,15 +186,33 @@ After=network.target
 
 [Service]
 User=etcd
+Type=notify
 EnvironmentFile=/etc/etcd.conf
 ExecStart=/usr/local/bin/etcd
 Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Start etcd on ALL nodes:
+---
+
+## CLEAN START (If Recreating)
+
+Run on each node before first start:
+
+```
+sudo systemctl stop etcd
+sudo rm -rf /var/lib/etcd/*
+sudo chown -R etcd:etcd /var/lib/etcd
+```
+
+---
+
+## Start Order
+
+### 1️⃣ Start pg1 etcd ONLY
 
 ```
 sudo systemctl daemon-reload
@@ -190,8 +222,44 @@ sudo systemctl enable etcd --now
 Verify:
 
 ```
-etcdctl member list
+ss -lntp | grep 2379
 ```
+
+Then check:
+
+```
+etcdctl member list -w table
+```
+
+You should see pg1 only.
+
+---
+
+### 2️⃣ Start pg2 etcd
+
+After pg1 is running:
+
+```
+sudo systemctl start etcd
+```
+
+Verify cluster.
+
+---
+
+### 3️⃣ Start pg3 etcd
+
+```
+sudo systemctl start etcd
+```
+
+Final verification:
+
+```
+etcdctl member list -w table
+```
+
+You must see 3 members in `started` state.
 
 ---
 
