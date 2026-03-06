@@ -74,6 +74,16 @@ Production: open ports:
 sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
 sudo dnf -qy module disable postgresql
 sudo dnf install -y postgresql16 postgresql16-server
+sudo dnf install -y epel-release
+sudo dnf install -y python3 python3-devel gcc git wget curl
+```
+
+Install Locale (ALL NODES)
+
+```
+sudo dnf install -y glibc-langpack-en
+sudo localedef -i en_US -f UTF-8 en_US.UTF-8
+locale -a | grep en_US
 ```
 
 Disable default service:
@@ -273,6 +283,7 @@ On ALL nodes:
 
 ```
 sudo systemctl stop patroni
+sudo pkill -9 postgres
 sudo rm -rf /var/lib/pgsql/16/data
 sudo mkdir -p /var/lib/pgsql/16/data
 sudo chown -R postgres:postgres /var/lib/pgsql
@@ -290,12 +301,17 @@ etcdctl del --prefix /service/pg_cluster
 
 1. Ensure etcd running on ALL nodes.
 2. Start Patroni on postgre-1 ONLY.
+```
+sudo systemctl start patroni
+```
 3. Wait until Leader is running.
 4. Start Patroni on postgre-2.
 5. Start Patroni on postgre-3.
+```
+sudo systemctl start patroni
+```
 
-Check:
-
+Verify:
 ```
 sudo -u postgres /opt/patroni/bin/patronictl -c /etc/patroni.yml list
 ```
