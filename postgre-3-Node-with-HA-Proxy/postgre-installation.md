@@ -150,7 +150,7 @@ sudo chown -R etcd:etcd /var/lib/etcd
 
 ## Create `/etc/etcd.conf`
 
-Example pg1 (FIRST BOOTSTRAP NODE):
+Example (ALL NODE):
 
 ```
 ETCD_NAME=postgre-1.example.com
@@ -163,15 +163,6 @@ ETCD_INITIAL_CLUSTER=postgre-1.example.com=http://<IP1>:2380,postgre-2.example.c
 ETCD_INITIAL_CLUSTER_STATE=new
 ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster
 ```
-
-Example pg2 / pg3 (JOINING NODES):
-
-```
-ETCD_INITIAL_CLUSTER_STATE=existing
-```
-
-⚠ Only pg1 uses `new`.
-All others use `existing`.
 
 ---
 
@@ -186,7 +177,7 @@ After=network.target
 
 [Service]
 User=etcd
-Type=notify
+Type=simple
 EnvironmentFile=/etc/etcd.conf
 ExecStart=/usr/local/bin/etcd
 Restart=always
