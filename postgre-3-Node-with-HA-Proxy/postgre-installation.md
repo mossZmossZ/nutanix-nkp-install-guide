@@ -395,85 +395,278 @@ Expected:
 
 ---
 
-# 9. Install HAProxy (haproxy-1)
+Client connects only to:
 
 ```
+<VIP_IP>:5000  (WRITE)
+<VIP_IP>:5001  (READ)
+```
+
+---
+
+# 1. Install HAProxy (Both HAProxy Nodes)
+
+```bash
+sudo apt update
 sudo apt install -y haproxy
 ```
 
-Edit `/etc/haproxy/haproxy.cfg`:
+---
+
+# 2. Configure HAProxy
+
+Edit on BOTH haproxy-1 and haproxy-2:
+
+```bash
+sudo nano /etc/haproxy/haproxy.cfg
+```
+
+---
+
+## HAProxy Configuration
 
 ```
 global
     daemon
+    maxconn 5000
 
 defaults
     mode tcp
     timeout connect 5s
-    timeout client 30m
-    timeout server 30m
+    timeout client  30m
+    timeout server  30m
+    option tcplog
 
+# WRITE traffic (Leader only)
 listen postgres_write
     bind *:5000
     option httpchk OPTIONS /master
     http-check expect status 200
+    default-server inter 3s fall 3 rise 2
+
     server pg1 <IP1>:5432 check port 8008
     server pg2 <IP2>:5432 check port 8008
     server pg3 <IP3>:5432 check port 8008
 
+# READ traffic (Replicas)
 listen postgres_read
     bind *:5001
     balance leastconn
     option httpchk OPTIONS /replica
     http-check expect status 200
+    default-server inter 3s fall 3 rise 2
+
     server pg1 <IP1>:5432 check port 8008
     server pg2 <IP2>:5432 check port 8008
     server pg3 <IP3>:5432 check port 8008
 ```
 
-Start HAProxy:
+Enable HAProxy:
 
-```
+```bash
 sudo systemctl enable haproxy --now
 ```
 
 ---
 
-# 10. Testing
+# 3. Install Keepalived (Floating VIP)
 
-Write:
+Install on BOTH HAProxy nodes:
 
-```
-psql -h <HAPROXY_IP> -p 5000 -U postgres
-```
-
-Read:
-
-```
-psql -h <HAPROXY_IP> -p 5001 -U postgres
+```bash
+sudo apt install -y keepalived
 ```
 
 ---
 
-# 11. Failover Test
+# 4. Keepalived Configuration
 
-Stop leader:
+## On haproxy-1 (MASTER)
 
 ```
+sudo nano /etc/keepalived/keepalived.conf
+```
+
+```
+vrrp_script chk_haproxy {
+    script "pidof haproxy"
+    interval 2
+    weight 2
+}
+
+vrrp_instance VI_1 {
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 200
+    advert_int 1
+
+    authentication {
+        auth_type PASS
+        auth_pass StrongPass123
+    }
+
+    virtual_ipaddress {
+        <VIP_IP>/24
+    }
+
+    track_script {
+        chk_haproxy
+    }
+}
+```
+
+---
+
+## On haproxy-2 (BACKUP)
+
+```
+sudo nano /etc/keepalived/keepalived.conf
+```
+
+```
+vrrp_script chk_haproxy {
+    script "pidof haproxy"
+    interval 2
+    weight 2
+}
+
+vrrp_instance VI_1 {
+    state BACKUP
+    interface eth0
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+
+    authentication {
+        auth_type PASS
+        auth_pass StrongPass123
+    }
+
+    virtual_ipaddress {
+        <VIP_IP>/24
+    }
+
+    track_script {
+        chk_haproxy
+    }
+}
+```
+
+---
+
+# 5. Enable Keepalived
+
+On BOTH nodes:
+
+```bash
+sudo systemctl enable keepalived --now
+```
+
+Verify VIP:
+
+```bash
+ip a | grep <VIP_IP>
+```
+
+VIP should appear ONLY on haproxy-1.
+
+---
+
+# 6. Failover Test
+
+## Test HAProxy failover
+
+On haproxy-1:
+
+```bash
+sudo systemctl stop haproxy
+```
+
+Expected:
+
+- VIP automatically moves to haproxy-2
+- Clients continue working
+
+Check:
+
+```bash
+ip a | grep <VIP_IP>
+```
+
+---
+
+## Test Node Failover
+
+Stop PostgreSQL leader:
+
+```bash
 sudo systemctl stop patroni
 ```
 
-Cluster will elect new leader automatically.
-HAProxy redirects traffic automatically.
+Expected:
+
+- Patroni elects new Leader
+- HAProxy detects change via REST API
+- No manual action required
+
+---
+
+# 7. Firewall Ports (Production)
+
+Open these ports:
+
+### PostgreSQL nodes:
+- 2379 (etcd client)
+- 2380 (etcd peer)
+- 5432 (Postgres)
+- 8008 (Patroni REST)
+
+### HAProxy nodes:
+- 5000 (write)
+- 5001 (read)
+- VRRP protocol (112)
 
 ---
 
 # Final Result
 
-- 3-node PostgreSQL HA
-- etcd quorum
-- Patroni-managed failover
-- HAProxy read/write split
-- Clean bootstrap process
-- Official PGDG packages
-- Locale verified
+✔ 3 PostgreSQL nodes  
+✔ etcd quorum  
+✔ Patroni automatic failover  
+✔ 2 HAProxy nodes  
+✔ Floating VIP  
+✔ Automatic HAProxy failover  
+✔ Automatic DB leader failover  
+✔ Zero manual intervention  
+
+---
+
+# Production Recommendation
+
+- Use dedicated interface for VIP
+- Enable firewall properly
+- Consider HAProxy stats socket
+- Enable TLS between components
+- Use strong authentication passwords
+- Monitor with Prometheus
+
+---
+
+# Client Connection
+
+Write:
+
+```
+psql -h <VIP_IP> -p 5000 -U postgres
+```
+
+Read:
+
+```
+psql -h <VIP_IP> -p 5001 -U postgres
+```
+
+---
+
+Cluster is now fully Highly Available end-to-end.
