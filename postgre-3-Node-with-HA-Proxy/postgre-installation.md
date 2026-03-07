@@ -489,9 +489,11 @@ sudo nano /etc/keepalived/keepalived.conf
 
 ```
 vrrp_script chk_haproxy {
-    script "pidof haproxy"
-    interval 2
-    weight 2
+    script "/bin/systemctl is-active --quiet haproxy"
+    interval 5
+    fall 3
+    rise 2
+    weight -20
 }
 
 vrrp_instance VI_1 {
